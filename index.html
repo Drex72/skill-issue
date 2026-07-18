@@ -468,6 +468,13 @@ function confetti(){
     else fctx.clearRect(0,0,fx.width,fx.height);
   })(t0);
 }
+async function sysNotify(title,body){
+  try{
+    const reg=await (navigator.serviceWorker&&navigator.serviceWorker.getRegistration&&navigator.serviceWorker.getRegistration());
+    if(reg&&reg.showNotification)return reg.showNotification(title,{body,icon:'icon-192.png',badge:'icon-192.png'});
+  }catch(e){}
+  try{new Notification(title,{body,icon:'icon-192.png'})}catch(e){}
+}
 function maybeCelebrate(){
   const today=S.my.items.filter(isToday);
   if(!today.length||!today.every(i=>i.done))return;
@@ -541,7 +548,7 @@ function checkNudges(){
   S.nudged.fired.push(...due);save();
   const left=today.filter(i=>!i.done).length;
   const body=left+' task'+(left>1?'s':'')+' left today. Lock in 💀';
-  try{new Notification('Skill Issue',{body})}catch(e){}
+  sysNotify('Skill Issue',body);
   toast(body);
 }
 setInterval(()=>{applyResets(S.my);checkNudges()},30000);
@@ -1254,12 +1261,12 @@ function subscribeRealtime(){
         S.inboxPings=[...(S.inboxPings||[]),{id:p.new.id,msg:p.new.msg,at:Date.now()}];
         save0();render();
         const body=(S.paired?S.paired.display:'Partner')+' pinged you'+(p.new.msg?': '+p.new.msg:' 👊');
-        try{new Notification('Skill Issue',{body})}catch(e){}
+        sysNotify('Skill Issue',body);
         toast('👊 '+body);
       })
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'sk_proofs',filter:'to_id=eq.'+S.uid},()=>{
         fetchInbox();
-        try{new Notification('Skill Issue',{body:'Vibe check waiting on your judgment 🔍'})}catch(e){}
+        sysNotify('Skill Issue','Vibe check waiting on your judgment');
       })
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'sk_proofs',filter:'from_id=eq.'+S.uid},p=>{
         const r=p.new;const it=S.my.items.find(x=>x.id===r.item_id);

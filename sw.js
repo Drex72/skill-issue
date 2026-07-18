@@ -1,4 +1,4 @@
-const CACHE = 'skill-issue-v1';
+const CACHE = 'skill-issue-v2';
 const ASSETS = ['./','./index.html','./config.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', e => {
