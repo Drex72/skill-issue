@@ -480,10 +480,10 @@ function confetti(){
     else fctx.clearRect(0,0,fx.width,fx.height);
   })(t0);
 }
-async function sysNotify(title,body){
+async function sysNotify(title,body,tag,actions){
   try{
     const reg=await (navigator.serviceWorker&&navigator.serviceWorker.getRegistration&&navigator.serviceWorker.getRegistration());
-    if(reg&&reg.showNotification)return reg.showNotification(title,{body,icon:'icon-192.png',badge:'icon-192.png'});
+    if(reg&&reg.showNotification)return reg.showNotification(title,{body,tag:tag||('n-'+Date.now()+'-'+Math.random()),renotify:true,actions:actions||[],icon:'icon-192.png',badge:'icon-192.png'});
   }catch(e){}
   try{new Notification(title,{body,icon:'icon-192.png'})}catch(e){}
 }
@@ -594,7 +594,8 @@ const isArchived=i=>i.kind==='task'&&i.done&&i.doneAt<startOfDay(Date.now());
 const pairBtn=document.getElementById('pairBtn');
 function pairUI(){
   const duoTab=document.getElementById('duoTab');
-  if(S.paired){pairBtn.textContent='🔗 '+S.paired.display;pairBtn.classList.add('on');duoTab.hidden=false}
+  if(S.paired&&S.paired.pending){pairBtn.textContent='⏳ '+S.paired.display;pairBtn.classList.remove('on');duoTab.hidden=true}
+  else if(S.paired){pairBtn.textContent='🔗 '+S.paired.display;pairBtn.classList.add('on');duoTab.hidden=false}
   else{pairBtn.textContent='🔗 Pair with someone';pairBtn.classList.remove('on');duoTab.hidden=true}
 }
 pairBtn.onclick=()=>{
@@ -622,11 +623,11 @@ pairBtn.onclick=()=>{
       const prof=await cloudFindUser(name);
       if(!prof){btn.textContent='Pair';toast('No one with that username yet. Tell them to sign up first');return}
       await cloudPair(prof);
-      S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id};
+      S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id,pending:true};
       S.partner={cats:[],items:[]};
       save0();box.innerHTML='';pairUI();render();
-      fetchPartner();fetchInbox();subscribeRealtime();
-      toast('Paired with '+S.paired.display+' 🔗 check the Duo tab');
+      subscribeRealtime();
+      toast('Request sent to '+prof.display+' 🤝 waiting on them');
       return;
     }
     const known=KNOWN[name];
@@ -1194,7 +1195,29 @@ async function cloudFindUser(u){
   }catch(e){return null}
 }
 async function cloudPair(prof){
-  try{await SB().from('sk_pairs').upsert({a:S.uid,b:prof.id})}catch(e){}
+  try{await SB().from('sk_pairs').upsert({a:S.uid,b:prof.id,status:'pending'})}catch(e){}
+}
+async function acceptPair(req){
+  try{
+    await SB().from('sk_pairs').update({status:'accepted'}).eq('a',req.a).eq('b',S.uid);
+    S.paired={name:req.username,display:req.display,tz:req.tz,uid:req.a};
+    S.pairReqs=(S.pairReqs||[]).filter(r=>r.a!==req.a);
+    save0();pairUI();render();
+    fetchPartner();subscribeRealtime();
+    toast('Paired with '+req.display+' 🔗');
+  }catch(e){toast('Could not accept. Try again')}
+}
+async function declinePair(req){
+  try{
+    await SB().from('sk_pairs').delete().eq('a',req.a).eq('b',S.uid);
+    S.pairReqs=(S.pairReqs||[]).filter(r=>r.a!==req.a);
+    save0();render();toast('Declined 🙅');
+  }catch(e){}
+}
+function applyPairAction(action){
+  const req=(S.pairReqs||[])[0];
+  if(!req)return;
+  if(action==='accept')acceptPair(req);else declinePair(req);
 }
 function cloudPushSoon(){
   if(!cloudOn()||!S||!S.uid)return;
@@ -1235,13 +1258,19 @@ async function fetchInbox(){
   if(!cloudOn()||!S.uid)return;
   try{
     const sb=SB();
-    const [{data:proofs},{data:pings}]=await Promise.all([
+    const [{data:proofs},{data:pings},{data:reqs}]=await Promise.all([
       sb.from('sk_proofs').select('*').eq('to_id',S.uid).eq('status','pending'),
-      sb.from('sk_pings').select('*').eq('to_id',S.uid).eq('seen',false)
+      sb.from('sk_pings').select('*').eq('to_id',S.uid).eq('seen',false),
+      sb.from('sk_pairs').select('*').eq('b',S.uid).eq('status','pending')
     ]);
     S.inbox=(proofs||[]).map(r=>({id:r.id,itemId:r.item_id,text:r.text,note:r.note,
       img:r.img_url,fileName:r.file_name,at:+new Date(r.created_at),db:true}));
-    S.inboxPings=(pings||[]).map(r=>({id:r.id,msg:r.msg,at:+new Date(r.created_at)}));
+    S.inboxPings=(pings||[]).map(r=>({id:r.id,itemId:r.item_id,msg:r.msg,at:+new Date(r.created_at)}));
+    S.pairReqs=[];
+    for(const r of (reqs||[])){
+      const {data:prof}=await sb.from('sk_profiles').select('*').eq('id',r.a).maybeSingle();
+      if(prof)S.pairReqs.push({a:r.a,username:prof.username,display:prof.display,tz:prof.tz});
+    }
     save0();render();
   }catch(e){}
 }
@@ -1274,13 +1303,28 @@ async function dismissPings(){
 }
 function renderPingBanner(){
   const host=document.getElementById('pingBanner');
+  host.innerHTML='';
+  for(const req of (S.pairReqs||[])){
+    const pb=document.createElement('div');pb.className='banner';
+    const row=document.createElement('div');row.className='row';
+    row.innerHTML=`<span>🤝 <b></b> wants to pair with you</span>`;
+    row.querySelector('b').textContent=req.display;
+    const yes=document.createElement('button');yes.textContent='Accept';
+    yes.onclick=()=>acceptPair(req);
+    const no=document.createElement('button');no.textContent='Decline';
+    no.onclick=()=>declinePair(req);
+    row.appendChild(yes);row.appendChild(no);
+    pb.appendChild(row);host.appendChild(pb);
+  }
   const list=S.inboxPings||[];
-  if(!list.length){host.innerHTML='';return}
+  if(!list.length)return;
   const b=document.createElement('div');b.className='banner';
   for(const p of list.slice(-4)){
+    const it=S.my.items.find(x=>x.id===p.itemId);
     const row=document.createElement('div');row.className='row';
-    row.innerHTML=`<span>👊 <b>${S.paired?S.paired.display:'Partner'}</b> pinged you${p.msg?': ':' '}<em></em></span>`;
-    if(p.msg)row.querySelector('em').textContent=p.msg;
+    row.innerHTML=`<span>👊 <b>${S.paired?S.paired.display:'Partner'}</b> about <em></em>${p.msg?': ':''}<i style="font-style:normal"></i></span>`;
+    row.querySelector('em').textContent=it?'"'+it.text+'"':'a task';
+    if(p.msg)row.querySelector('i').textContent=p.msg;
     b.appendChild(row);
   }
   const clear=document.createElement('button');clear.className='clear';clear.textContent='Dismiss';
@@ -1294,15 +1338,34 @@ function subscribeRealtime(){
   if(!_rt){
     _rt=sb.channel('inbox-'+S.uid)
       .on('postgres_changes',{event:'INSERT',schema:'public',table:'sk_pings',filter:'to_id=eq.'+S.uid},p=>{
-        S.inboxPings=[...(S.inboxPings||[]),{id:p.new.id,msg:p.new.msg,at:Date.now()}];
+        S.inboxPings=[...(S.inboxPings||[]),{id:p.new.id,itemId:p.new.item_id,msg:p.new.msg,at:Date.now()}];
         save0();render();
-        const body=(S.paired?S.paired.display:'Partner')+' pinged you'+(p.new.msg?': '+p.new.msg:' 👊');
-        sysNotify('Skill Issue',body);
+        const who=S.paired?S.paired.display:'Partner';
+        const it=S.my.items.find(x=>x.id===p.new.item_id);
+        const body=who+': "'+(it?it.text:'your task')+'"'+(p.new.msg?' - '+p.new.msg:' 👊');
+        sysNotify('Skill Issue',body,'ping-'+p.new.id);
         toast('👊 '+body);
       })
-      .on('postgres_changes',{event:'INSERT',schema:'public',table:'sk_proofs',filter:'to_id=eq.'+S.uid},()=>{
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'sk_pairs',filter:'b=eq.'+S.uid},async p=>{
+        await fetchInbox();
+        const req=(S.pairReqs||[])[0];
+        const who=req?req.display:'Someone';
+        sysNotify('Skill Issue',who+' wants to pair with you 🤝','pair-'+p.new.a,
+          [{action:'accept',title:'Yes'},{action:'decline',title:'No'}]);
+        toast('🤝 '+who+' wants to pair');
+      })
+      .on('postgres_changes',{event:'UPDATE',schema:'public',table:'sk_pairs',filter:'a=eq.'+S.uid},p=>{
+        if(p.new.status==='accepted'&&S.paired&&S.paired.pending){
+          S.paired.pending=false;save0();pairUI();render();
+          fetchPartner();subscribeRealtime();
+          toast(S.paired.display+' accepted 🔗');
+          sysNotify('Skill Issue',S.paired.display+' accepted your pair request 🔗','pairok-'+Date.now());
+        }
+      })
+      .on('postgres_changes',{event:'INSERT',schema:'public',table:'sk_proofs',filter:'to_id=eq.'+S.uid},p=>{
         fetchInbox();
-        sysNotify('Skill Issue','Vibe check waiting on your judgment');
+        const who=S.paired?S.paired.display:'Partner';
+        sysNotify('Skill Issue',who+' says "'+(p.new.text||'a task')+'" is done. You be the judge 🔍','proof-'+p.new.id);
       })
       .on('postgres_changes',{event:'UPDATE',schema:'public',table:'sk_proofs',filter:'from_id=eq.'+S.uid},p=>{
         const r=p.new;const it=S.my.items.find(x=>x.id===r.item_id);
@@ -1337,12 +1400,18 @@ async function cloudBoot(){
   }
   if(!S.paired){
     try{
-      const {data}=await SB().from('sk_pairs').select('a,b').or('a.eq.'+S.uid+',b.eq.'+S.uid).limit(1).maybeSingle();
+      const {data}=await SB().from('sk_pairs').select('*').or('a.eq.'+S.uid+',b.eq.'+S.uid).eq('status','accepted').limit(1).maybeSingle();
       if(data){
         const other=data.a===S.uid?data.b:data.a;
         const {data:prof}=await SB().from('sk_profiles').select('*').eq('id',other).maybeSingle();
         if(prof)S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id};
       }
+    }catch(e){}
+  }else if(S.paired.pending){
+    try{
+      const {data}=await SB().from('sk_pairs').select('status').eq('a',S.uid).eq('b',S.paired.uid).maybeSingle();
+      if(data&&data.status==='accepted')S.paired.pending=false;
+      if(!data)S.paired=null;
     }catch(e){}
   }else if(!S.paired.uid){
     const prof=await cloudFindUser(S.paired.name);
@@ -1360,4 +1429,13 @@ document.getElementById('tabs').onclick=e=>{
   if(filter==='duo'&&cloudOn()){fetchPartner();fetchInbox()}
 };
 load();render();checkNudges();cloudBoot();
+if('serviceWorker'in navigator){
+  navigator.serviceWorker.addEventListener('message',e=>{
+    if(e.data&&e.data.type==='pairAction')applyPairAction(e.data.action);
+  });
+}
+try{
+  const pa=new URLSearchParams(location.search).get('pairAction');
+  if(pa)setTimeout(()=>applyPairAction(pa),1500);
+}catch(e){}
 </script>

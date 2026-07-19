@@ -1,4 +1,4 @@
-const CACHE = 'skill-issue-v2';
+const CACHE = 'skill-issue-v3';
 const ASSETS = ['./','./index.html','./config.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -30,8 +30,14 @@ self.addEventListener('fetch', e => {
 });
 self.addEventListener('notificationclick', e => {
   e.notification.close();
+  const action = e.action;
   e.waitUntil(self.clients.matchAll({type:'window',includeUncontrolled:true}).then(list => {
+    if (action && list.length) {
+      list[0].postMessage({type:'pairAction', action});
+      if (list[0].focus) return list[0].focus();
+      return;
+    }
     for (const c of list) if ('focus' in c) return c.focus();
-    return self.clients.openWindow('./');
+    return self.clients.openWindow(action ? ('./?pairAction='+action) : './');
   }));
 });
