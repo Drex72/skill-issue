@@ -608,12 +608,38 @@ const isOverdue=i=>i.kind==='task'&&!i.done&&i.sched&&i.sched<startOfDay(Date.no
 const isArchived=i=>i.kind==='task'&&i.done&&i.doneAt<startOfDay(Date.now());
 
 /* ---------- notifications ---------- */
+const VAPID_PUB='BE9J34Iy-YZrvFf1xeed4IGpHrUYmU2Tb9ltN4gTqtrA06-zvLjQzDOBo6EWYD9WzMSbSzzzOJOHbqhqgIZBxYw';
+function b64ToU8(s){
+  const pad='='.repeat((4-s.length%4)%4);
+  const raw=atob((s+pad).replace(/-/g,'+').replace(/_/g,'/'));
+  return Uint8Array.from([...raw].map(c=>c.charCodeAt(0)));
+}
+async function subscribePush(){
+  try{
+    if(!cloudOn()||!S.uid)return;
+    if(!('serviceWorker'in navigator)||!('PushManager'in window))return;
+    if(!('Notification'in window)||Notification.permission!=='granted')return;
+    const reg=await navigator.serviceWorker.ready;
+    let sub=await reg.pushManager.getSubscription();
+    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:b64ToU8(VAPID_PUB)});
+    const j=sub.toJSON();
+    await SB().from('sk_push_subs').upsert({endpoint:sub.endpoint,user_id:S.uid,p256dh:j.keys.p256dh,auth:j.keys.auth});
+  }catch(e){}
+}
+async function unsubscribePushLocal(){
+  try{
+    const reg=await navigator.serviceWorker.ready;
+    const sub=await reg.pushManager.getSubscription();
+    if(sub){try{await SB().from('sk_push_subs').delete().eq('endpoint',sub.endpoint)}catch(e){}}
+  }catch(e){}
+}
 async function askNotifPermission(){
   try{
     if(!('Notification'in window))return;
+    if(Notification.permission==='granted'){subscribePush();return}
     if(Notification.permission!=='default')return;
     const p=await Notification.requestPermission();
-    if(p==='granted')toast('Notifications on 🔔');
+    if(p==='granted'){toast('Notifications on 🔔');subscribePush()}
   }catch(e){}
 }
 
@@ -645,6 +671,7 @@ function wireLogout(box){
     }
     b.textContent='Logging out…';b.disabled=true;
     try{await pushMine()}catch(e){}
+    try{await unsubscribePushLocal()}catch(e){}
     try{await SB().auth.signOut()}catch(e){}
     try{localStorage.removeItem(KEY)}catch(e){}
     location.reload();
@@ -1422,6 +1449,7 @@ function renderPingBanner(){
     en.onclick=async()=>{
       const p=await Notification.requestPermission();
       toast(p==='granted'?'Notifications on 🔔':'Blocked. You can change it in your device settings');
+      if(p==='granted')subscribePush();
       render();
     };
     row.appendChild(en);nb.appendChild(row);host.appendChild(nb);
@@ -1551,6 +1579,7 @@ async function cloudBoot(){
   pushMine();fetchPartner();fetchInbox();subscribeRealtime();
   addEventListener('online',()=>{pushMine();fetchPartner();fetchInbox()});
   setInterval(()=>{if(navigator.onLine&&cloudOn()){fetchInbox();if(filter==='duo')fetchPartner()}},45000);
+  subscribePush();
 }
 
 document.getElementById('tabs').onclick=e=>{

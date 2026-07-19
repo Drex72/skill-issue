@@ -1,4 +1,4 @@
-const CACHE = 'skill-issue-v4';
+const CACHE = 'skill-issue-v5';
 const ASSETS = ['./','./index.html','./config.js','./anime.min.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', e => {
@@ -39,5 +39,17 @@ self.addEventListener('notificationclick', e => {
     }
     for (const c of list) if ('focus' in c) return c.focus();
     return self.clients.openWindow(action ? ('./?pairAction='+action) : './');
+  }));
+});
+
+self.addEventListener('push', e => {
+  let d = {};
+  try { d = e.data ? e.data.json() : {}; } catch (err) {}
+  e.waitUntil(self.registration.showNotification(d.title || 'Skill Issue 💀', {
+    body: d.body || '',
+    tag: d.tag || 'sk-' + Date.now(),
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    data: d
   }));
 });
