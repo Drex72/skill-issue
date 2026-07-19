@@ -191,6 +191,18 @@
   .ob-note{font-size:11.5px;color:var(--faint);margin-top:4px}
   #fx{position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:50}
   @media (prefers-reduced-motion:reduce){*{transition:none!important}}
+  html{-webkit-text-size-adjust:100%}
+  body{overflow-x:hidden}
+  input,select,textarea{font-size:16px!important}
+  .overlay{overflow:auto;-webkit-overflow-scrolling:touch}
+  body.lock{overflow:hidden;position:fixed;inset:0;width:100%}
+  .top{flex-wrap:wrap;row-gap:10px}
+  @media(max-width:430px){
+    .panel{margin-left:0}
+    .addrow select{max-width:96px}
+    h1{font-size:28px}
+    .pairbtn{padding:7px 11px}
+  }
 </style>
 <canvas id="fx"></canvas>
 <div class="overlay" id="onboard" hidden>
@@ -397,7 +409,7 @@ const starterSeed=()=>build(['Health','Work','Personal'],[
   ['Personal','Call someone you love','weekly'],
 ]);
 function onboard(){
-  const ov=document.getElementById('onboard');ov.hidden=false;
+  const ov=document.getElementById('onboard');ov.hidden=false;document.body.classList.add('lock');
   const name=document.getElementById('obName'),step1=document.getElementById('obStep1'),
         step2=document.getElementById('obStep2'),sub=document.getElementById('obSub');
   requestAnimationFrame(()=>name.focus());
@@ -412,7 +424,7 @@ function onboard(){
     }
     S.profile={username:u,display:cap(u),tz:myTz()};
     if(S.my.items.length){ // existing data, just needed a name
-      save();ov.hidden=true;render();toast('@'+u+' is in. Skill Issue 💀');return;
+      save();ov.hidden=true;document.body.classList.remove('lock');render();toast('@'+u+' is in. Skill Issue 💀');return;
     }
     step1.hidden=true;step2.hidden=false;
     sub.textContent='How do you want to start, '+S.profile.display+'?';
@@ -420,13 +432,13 @@ function onboard(){
   document.getElementById('obGo').onclick=claim;
   name.onkeydown=e=>{if(e.key==='Enter')claim()};
   document.getElementById('obBlank').onclick=()=>{
-    save();ov.hidden=true;render();
+    save();ov.hidden=true;document.body.classList.remove('lock');render();
     toast('Blank canvas. Add your first task below ✨');
   };
   document.getElementById('obTmpl').onclick=()=>{
     const u=S.profile.username;
     S.my=KNOWN[u]?KNOWN[u].data():(['drex','dim','david'].includes(u)?mySeed():starterSeed());
-    save();ov.hidden=true;render();toast('Template loaded. Make it yours');
+    save();ov.hidden=true;document.body.classList.remove('lock');render();toast('Template loaded. Make it yours');
   };
 }
 function save0(){store.set(KEY,JSON.stringify(S))}
@@ -1142,13 +1154,37 @@ async function ensureAuth(){
 async function cloudClaim(u){
   const user=await ensureAuth();
   if(!user)return 'Could not reach the server. Check your connection and try again';
-  const {error}=await SB().from('sk_profiles').upsert({id:user.id,username:u,display:cap(u),tz:myTz()});
-  if(error){
-    if(String(error.code)==='23505')return 'That username is taken. Try another';
-    return 'Server said no: '+error.message;
-  }
-  S.uid=user.id;save0();
-  return null;
+  S.uid=user.id;
+  try{
+    const {data,error}=await SB().rpc('sk_login',{p_username:u});
+    if(error)return 'Server said no: '+error.message;
+    const st=data&&data.status;
+    if(st==='new'){
+      const {error:e2}=await SB().from('sk_profiles').upsert({id:user.id,username:u,display:cap(u),tz:myTz()});
+      if(e2)return 'Server said no: '+e2.message;
+    }else{
+      await SB().from('sk_profiles').update({tz:myTz()}).eq('id',user.id);
+      await pullMine();
+    }
+    save0();
+    return null;
+  }catch(e){return 'Could not reach the server. Try again'}
+}
+async function pullMine(){
+  try{
+    const sb=SB();
+    const [{data:cats},{data:items}]=await Promise.all([
+      sb.from('sk_categories').select('*').eq('user_id',S.uid),
+      sb.from('sk_items').select('*').eq('user_id',S.uid)
+    ]);
+    if((cats&&cats.length)||(items&&items.length)){
+      S.my={cats:(cats||[]).map(c=>({id:c.id,name:c.name})),
+        items:(items||[]).map(r=>({id:r.id,cat:r.cat,text:r.text,kind:r.kind,days:r.days,time:r.time,
+          sched:r.sched?+r.sched:null,done:!!r.done,doneAt:r.done_at?+r.done_at:0,status:r.status||'idle'}))};
+      applyResets(S.my);
+    }
+    save0();
+  }catch(e){}
 }
 async function cloudFindUser(u){
   try{
