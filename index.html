@@ -622,7 +622,13 @@ pairBtn.onclick=()=>{
       const btn=document.getElementById('pairGo');btn.textContent='…';
       const prof=await cloudFindUser(name);
       if(!prof){btn.textContent='Pair';toast('No one with that username yet. Tell them to sign up first');return}
-      await cloudPair(prof);
+      try{
+        const {data:taken}=await SB().from('sk_pairs').select('a,b').eq('status','accepted')
+          .or('a.eq.'+prof.id+',b.eq.'+prof.id).limit(1);
+        if(taken&&taken.length){btn.textContent='Pair';toast(prof.display+' is already locked in with someone. They have to unpair first 💔');return}
+      }catch(e){}
+      const paired=await cloudPair(prof);
+      if(!paired){btn.textContent='Pair';toast('Could not send the request. Try again');return}
       S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id,pending:true};
       S.partner={cats:[],items:[]};
       save0();box.innerHTML='';pairUI();render();
@@ -979,6 +985,12 @@ function roomCard(name,st,scope,readonly){
 /* ---------- render ---------- */
 function render(){
   pairUI();nudgeUI();renderPingBanner();
+  try{
+    if(navigator.setAppBadge){
+      const left=S.my.items.filter(isToday).filter(i=>!i.done).length;
+      left?navigator.setAppBadge(left):navigator.clearAppBadge();
+    }
+  }catch(e){}
   document.querySelectorAll('.tab').forEach(b=>{
     b.classList.toggle('active',b.dataset.f===filter);
     if(b.dataset.f==='duo')b.innerHTML='Duo'+(S.inbox.length?'<span class="dot"></span>':'');
@@ -1195,9 +1207,13 @@ async function cloudFindUser(u){
   }catch(e){return null}
 }
 async function cloudPair(prof){
-  try{await SB().from('sk_pairs').upsert({a:S.uid,b:prof.id,status:'pending'})}catch(e){}
+  try{
+    const {error}=await SB().from('sk_pairs').upsert({a:S.uid,b:prof.id,status:'pending'});
+    return !error;
+  }catch(e){return false}
 }
 async function acceptPair(req){
+  if(S.paired&&!S.paired.pending){toast("You're already paired. Unpair first to accept a new partner");return}
   try{
     await SB().from('sk_pairs').update({status:'accepted'}).eq('a',req.a).eq('b',S.uid);
     S.paired={name:req.username,display:req.display,tz:req.tz,uid:req.a};
@@ -1304,6 +1320,18 @@ async function dismissPings(){
 function renderPingBanner(){
   const host=document.getElementById('pingBanner');
   host.innerHTML='';
+  if(cloudOn()&&('Notification'in window)&&Notification.permission==='default'&&(S.paired||(S.pairReqs||[]).length)){
+    const nb=document.createElement('div');nb.className='banner';
+    const row=document.createElement('div');row.className='row';
+    row.innerHTML='<span>🔔 Turn on notifications so pings and pair requests actually reach you</span>';
+    const en=document.createElement('button');en.textContent='Enable';
+    en.onclick=async()=>{
+      const p=await Notification.requestPermission();
+      toast(p==='granted'?'Notifications on 🔔':'Blocked. You can change it in your device settings');
+      render();
+    };
+    row.appendChild(en);nb.appendChild(row);host.appendChild(nb);
+  }
   for(const req of (S.pairReqs||[])){
     const pb=document.createElement('div');pb.className='banner';
     const row=document.createElement('div');row.className='row';
