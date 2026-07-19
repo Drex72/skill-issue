@@ -413,12 +413,19 @@ function onboard(){
   const name=document.getElementById('obName'),step1=document.getElementById('obStep1'),
         step2=document.getElementById('obStep2'),sub=document.getElementById('obSub');
   requestAnimationFrame(()=>name.focus());
+  let claiming=false;
   const claim=async()=>{
+    if(claiming)return;
     const u=name.value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');
     if(!u){name.value='';name.placeholder='pick something!';return}
+    const goBtn=document.getElementById('obGo');
     if(cloudOn()){
+      claiming=true;
+      goBtn.disabled=true;goBtn.textContent='Hold on…';goBtn.style.opacity='.6';
       sub.textContent='Checking username…';
       const err=await cloudClaim(u);
+      claiming=false;
+      goBtn.disabled=false;goBtn.textContent='Continue';goBtn.style.opacity='';
       if(err){sub.textContent=err;return}
       sub.textContent='';
     }
