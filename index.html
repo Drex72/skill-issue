@@ -6,6 +6,7 @@
 <meta name="theme-color" content="#F4F5F2">
 <link rel="apple-touch-icon" href="icon-192.png">
 <script src="config.js"></script>
+<script src="anime.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Fraunces:opsz,wght@9..144,600;9..144,700&display=swap" rel="stylesheet">
@@ -74,6 +75,11 @@
   .item.done.ro .chk{background:var(--green);border-color:var(--green)}
   .chk[disabled]{cursor:default}
   .chk:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+  @keyframes rise{from{opacity:0;transform:translateY(10px) scale(.98)}to{opacity:1;transform:none}}
+  .panel{animation:rise .3s cubic-bezier(.2,.9,.3,1.15)}
+  @keyframes pendpulse{0%,100%{box-shadow:0 0 0 0 rgba(255,170,0,.35)}50%{box-shadow:0 0 0 7px rgba(255,170,0,0)}}
+  #pairBtn.pend{animation:pendpulse 2.2s ease-in-out infinite}
+  @media (prefers-reduced-motion:reduce){.panel,#pairBtn.pend{animation:none}}
   .mid{flex:1;min-width:0}
   .txt{display:block;overflow-wrap:break-word;cursor:text;border-radius:4px}
   .ro .txt{cursor:default}
@@ -597,30 +603,82 @@ const isToday=i=>{
 const isOverdue=i=>i.kind==='task'&&!i.done&&i.sched&&i.sched<startOfDay(Date.now());
 const isArchived=i=>i.kind==='task'&&i.done&&i.doneAt<startOfDay(Date.now());
 
+/* ---------- motion ---------- */
+const MOTION=!(window.matchMedia&&matchMedia('(prefers-reduced-motion: reduce)').matches);
+function anim(o){try{if(MOTION&&window.anime)return anime(o)}catch(e){}}
+function animList(sel,host){
+  const els=(host||document).querySelectorAll(sel);
+  if(!els.length||els.length>40)return;
+  anim({targets:els,translateY:[16,0],opacity:[0,1],
+    delay:window.anime?anime.stagger(26):0,duration:600,easing:'spring(1, 90, 13, 0)'});
+}
+
 /* ---------- pairing ---------- */
 const pairBtn=document.getElementById('pairBtn');
 function pairUI(){
   const duoTab=document.getElementById('duoTab');
-  if(S.paired&&S.paired.pending){pairBtn.textContent='⏳ '+S.paired.display;pairBtn.classList.remove('on');duoTab.hidden=true}
-  else if(S.paired){pairBtn.textContent='🔗 '+S.paired.display;pairBtn.classList.add('on');duoTab.hidden=false}
-  else{pairBtn.textContent='🔗 Pair with someone';pairBtn.classList.remove('on');duoTab.hidden=true}
+  if(S.paired&&S.paired.pending){pairBtn.textContent='⏳ '+S.paired.display;pairBtn.classList.remove('on');pairBtn.classList.add('pend');duoTab.hidden=true}
+  else if(S.paired){pairBtn.textContent='🔗 '+S.paired.display;pairBtn.classList.add('on');pairBtn.classList.remove('pend');duoTab.hidden=false}
+  else{pairBtn.textContent='🔗 Pair with someone';pairBtn.classList.remove('on');pairBtn.classList.remove('pend');duoTab.hidden=true}
+}
+function logoutHTML(){return cloudOn()&&S.uid?`<button class="btn ghost" id="logoutBtn">Log out${S.profile?' of @'+S.profile.username:''}</button>`:''}
+function wireLogout(box){
+  const b=document.getElementById('logoutBtn');if(!b)return;
+  b.onclick=async()=>{
+    if(!b.classList.contains('sure')){
+      b.classList.add('sure');b.textContent='sure? your stuff stays in the cloud';
+      setTimeout(()=>{b.classList.remove('sure');b.textContent='Log out'},3200);return;
+    }
+    b.textContent='Logging out…';b.disabled=true;
+    try{await pushMine()}catch(e){}
+    try{await SB().auth.signOut()}catch(e){}
+    try{localStorage.removeItem(KEY)}catch(e){}
+    location.reload();
+  };
+}
+async function cancelPairRequest(){
+  try{if(cloudOn()&&S.paired&&S.paired.uid)await SB().from('sk_pairs').delete().eq('a',S.uid).eq('b',S.paired.uid)}catch(e){}
+  S.paired=null;S.partner=null;save0();pairUI();render();toast('Request cancelled 🗑️');
+}
+async function resendPairRequest(){
+  if(!cloudOn()||!S.paired||!S.paired.uid){toast('Nothing to resend');return}
+  try{
+    await SB().from('sk_pairs').delete().eq('a',S.uid).eq('b',S.paired.uid);
+    const {error}=await SB().from('sk_pairs').insert({a:S.uid,b:S.paired.uid,status:'pending'});
+    if(error){toast('Could not resend: '+(error.message||'server error'));return}
+    toast('Request re-sent to '+S.paired.display+' 🤝');
+  }catch(e){toast('Could not resend. Check your connection')}
 }
 pairBtn.onclick=()=>{
   const box=document.getElementById('pairBox');
   if(box.innerHTML){box.innerHTML='';return}
+  if(S.paired&&S.paired.pending){
+    box.innerHTML=`<div class="pairbox"><span style="opacity:.75">Waiting on ${S.paired.display} ⏳</span>
+      <button class="btn pri" id="resendReq">Resend</button>
+      <button class="btn nah" id="cancelReq">Cancel request</button>
+      <button class="btn ghost" id="nvm">never mind</button>
+      ${logoutHTML()}</div>`;
+    document.getElementById('resendReq').onclick=async()=>{box.innerHTML='';await resendPairRequest()};
+    document.getElementById('cancelReq').onclick=async()=>{box.innerHTML='';await cancelPairRequest()};
+    document.getElementById('nvm').onclick=()=>box.innerHTML='';
+    wireLogout(box);
+    return;
+  }
   if(S.paired){
     box.innerHTML=`<div class="pairbox"><button class="btn nah" id="unpair">Unpair from ${S.paired.display}</button>
-      <button class="btn ghost" id="nvm">never mind</button></div>`;
+      <button class="btn ghost" id="nvm">never mind</button>${logoutHTML()}</div>`;
     document.getElementById('unpair').onclick=()=>{
       S.paired=null;S.partner=null;S.inbox=[];
       if(filter==='duo')filter='daily';
       save();box.innerHTML='';pairUI();render();toast('Unpaired 💔');
     };
     document.getElementById('nvm').onclick=()=>box.innerHTML='';
+    wireLogout(box);
     return;
   }
   box.innerHTML=`<div class="pairbox"><input id="pairName" placeholder="their username from signup…${cloudOn()?"":" (demo: teledua)"}" autocomplete="off">
-    <button id="pairGo">Pair</button></div>`;
+    <button id="pairGo">Pair</button>${logoutHTML()}</div>`;
+  wireLogout(box);
   const inp=document.getElementById('pairName');inp.focus();
   const go=async()=>{
     const name=inp.value.trim().toLowerCase();if(!name)return;
@@ -630,12 +688,27 @@ pairBtn.onclick=()=>{
       const prof=await cloudFindUser(name);
       if(!prof){btn.textContent='Pair';toast('No one with that username yet. Tell them to sign up first');return}
       try{
+        const {data:mine}=await SB().from('sk_pairs').select('*').eq('a',S.uid).eq('status','pending').limit(1);
+        if(mine&&mine.length){
+          const {data:mp}=await SB().from('sk_profiles').select('*').eq('id',mine[0].b).maybeSingle();
+          S.paired={name:mp?mp.username:'?',display:mp?mp.display:'someone',tz:mp?mp.tz:null,uid:mine[0].b,pending:true};
+          save0();box.innerHTML='';pairUI();render();
+          btn.textContent='Pair';
+          toast('You already have a request out to '+(mp?mp.display:'someone')+'. Tap 🔗 to resend or cancel it');
+          return;
+        }
         const {data:taken}=await SB().from('sk_pairs').select('a,b').eq('status','accepted')
           .or('a.eq.'+prof.id+',b.eq.'+prof.id).limit(1);
         if(taken&&taken.length){btn.textContent='Pair';toast(prof.display+' is already locked in with someone. They have to unpair first 💔');return}
       }catch(e){}
-      const paired=await cloudPair(prof);
-      if(!paired){btn.textContent='Pair';toast('Could not send the request. Try again');return}
+      const perr=await cloudPair(prof);
+      if(perr){
+        btn.textContent='Pair';
+        if(/already paired/i.test(perr))toast(prof.display+' is already locked in with someone 💔');
+        else if(/duplicate|unique/i.test(perr))toast('A request already exists. Tap 🔗 to resend or cancel it');
+        else toast('Could not send: '+perr);
+        return;
+      }
       S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id,pending:true};
       S.partner={cats:[],items:[]};
       save0();box.innerHTML='';pairUI();render();
@@ -1215,9 +1288,9 @@ async function cloudFindUser(u){
 }
 async function cloudPair(prof){
   try{
-    const {error}=await SB().from('sk_pairs').upsert({a:S.uid,b:prof.id,status:'pending'});
-    return !error;
-  }catch(e){return false}
+    const {error}=await SB().from('sk_pairs').insert({a:S.uid,b:prof.id,status:'pending'});
+    return error?(error.message||'server error'):null;
+  }catch(e){return 'network error'}
 }
 async function acceptPair(req){
   if(S.paired&&!S.paired.pending){toast("You're already paired. Unpair first to accept a new partner");return}

@@ -1,5 +1,5 @@
-const CACHE = 'skill-issue-v3';
-const ASSETS = ['./','./index.html','./config.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
+const CACHE = 'skill-issue-v4';
+const ASSETS = ['./','./index.html','./config.js','./anime.min.js','./manifest.webmanifest','./icon-192.png','./icon-512.png'];
 
 self.addEventListener('install', e => {
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
