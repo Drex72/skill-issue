@@ -418,7 +418,11 @@ function onboard(){
   const ov=document.getElementById('onboard');ov.hidden=false;document.body.classList.add('lock');
   const name=document.getElementById('obName'),step1=document.getElementById('obStep1'),
         step2=document.getElementById('obStep2'),sub=document.getElementById('obSub');
-  requestAnimationFrame(()=>name.focus());
+  requestAnimationFrame(()=>{
+    name.focus();
+    anim({targets:'#obStep1 > *',translateY:[18,0],opacity:[0,1],
+      delay:window.anime?anime.stagger(60):0,duration:700,easing:'spring(1, 85, 12, 0)'});
+  });
   let claiming=false;
   const claim=async()=>{
     if(claiming)return;
@@ -1438,7 +1442,9 @@ function renderPingBanner(){
   const clear=document.createElement('button');clear.className='clear';clear.textContent='Dismiss';
   clear.onclick=()=>{S.inboxPings=[];save0();if(cloudOn())dismissPings();renderPingBanner()};
   b.appendChild(clear);
-  host.innerHTML='';host.appendChild(b);
+  host.appendChild(b);
+  if(host.children.length>(renderPingBanner._n||0))animList('.banner',host);
+  renderPingBanner._n=host.children.length;
 }
 function subscribeRealtime(){
   if(!cloudOn()||!S.uid)return;
@@ -1513,6 +1519,12 @@ async function cloudBoot(){
         const other=data.a===S.uid?data.b:data.a;
         const {data:prof}=await SB().from('sk_profiles').select('*').eq('id',other).maybeSingle();
         if(prof)S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id};
+      }else{
+        const {data:pend}=await SB().from('sk_pairs').select('*').eq('a',S.uid).eq('status','pending').limit(1).maybeSingle();
+        if(pend){
+          const {data:prof}=await SB().from('sk_profiles').select('*').eq('id',pend.b).maybeSingle();
+          if(prof)S.paired={name:prof.username,display:prof.display,tz:prof.tz,uid:prof.id,pending:true};
+        }
       }
     }catch(e){}
   }else if(S.paired.pending){
@@ -1534,6 +1546,7 @@ async function cloudBoot(){
 document.getElementById('tabs').onclick=e=>{
   const b=e.target.closest('.tab');if(!b)return;
   filter=b.dataset.f;openPanel=null;addOpen=false;render();
+  animList('.item');
   if(filter==='duo'&&cloudOn()){fetchPartner();fetchInbox()}
 };
 load();render();checkNudges();cloudBoot();
